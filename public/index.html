@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Панель SMS и Мониторинг</title>
+		<link rel="stylesheet" href="styles.css" />
+	</head>
+	<body>
+		<div class="container">
+			<header class="header">
+				<h1>Панель SMS и Мониторинг</h1>
+			</header>
+			<main class="main-content">
+				<section class="sms-section">
+					<h2>Отправить SMS</h2>
+					<form id="smsForm" class="form">
+						<div class="form-group">
+							<label for="phoneNumbers"
+								>Номера телефонов (через запятую):</label
+							>
+							<input
+								type="text"
+								id="phoneNumbers"
+								name="phoneNumbers"
+								placeholder="+1234567890, +0987654321"
+								required
+							/>
+						</div>
+						<div class="form-group">
+							<label for="message">Сообщение:</label>
+							<textarea
+								id="message"
+								name="message"
+								placeholder="Введите текст сообщения..."
+								required
+							></textarea>
+						</div>
+						<button type="submit" class="btn">Отправить SMS</button>
+					</form>
+					<div id="result" class="result"></div>
+				</section>
+
+				<section class="balance-section">
+					<h2>Баланс и затраты</h2>
+					<button id="checkBalanceBtn" class="btn">Проверить баланс</button>
+					<div id="balanceInfo">Нажмите кнопку, чтобы проверить баланс.</div>
+				</section>
+
+				<section class="stats-section">
+					<h2>Статистика и Мониторинг</h2>
+					<pre id="statsContent" class="stats-content">
+Загрузка статистики...</pre
+					>
+				</section>
+			</main>
+			<footer class="footer">&copy; 2023 Панель SMS и Мониторинг</footer>
+		</div>
+		<script src="script.js"></script>
+	</body>
+</html>
