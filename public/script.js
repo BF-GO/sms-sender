@@ -6,8 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
 	const checkBalanceBtn = document.getElementById('checkBalanceBtn');
 
 	async function fetchBalanceInfo() {
-		balanceInfoDiv.textContent = 'Отправка запроса на баланс...';
-
 		try {
 			const smsResponse = await fetch('/check-balance', {
 				method: 'POST',
@@ -28,8 +26,8 @@ document.addEventListener('DOMContentLoaded', () => {
 			if (data.success) {
 				balanceInfoDiv.innerHTML = `
 					<p>Текущий баланс: ${data.currentBalance}</p>
-					<p>Предыдущий баланс: ${data.previousBalance || 'N/A'}</p>
-					<p>Потрачено с последней проверки: ${data.spent || '0.00 €'}</p>
+					<p>Предыдущий баланс: ${data.previousBalance}</p>
+					<p>Потрачено с последней проверки: ${data.spent}</p>
 				`;
 			} else {
 				balanceInfoDiv.textContent = data.error;
@@ -59,7 +57,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
 			if (response.ok) {
 				resultDiv.textContent = 'SMS успешно отправлено!';
-				setTimeout(fetchBalanceInfo, 500);
+				balanceInfoDiv.innerHTML = `
+					<p>Предыдущий баланс: ${data.previousBalance}</p>
+					<p>Получаем текущий баланс...</p>
+				`;
+				fetchBalanceInfo();
 			} else {
 				resultDiv.textContent =
 					'Ошибка: ' + (data.error || 'Не удалось отправить SMS.');

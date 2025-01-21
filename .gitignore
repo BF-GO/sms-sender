@@ -1,3 +1,4 @@
 /node_modules
 /package-lock.json
-/аы.json
+.env
+balance_logs.json

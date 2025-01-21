@@ -4,6 +4,8 @@ const path = require('path');
 const huaweiLteApi = require('huawei-lte-api');
 const fs = require('fs');
 
+const { promises: fsPromises } = require('fs');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -21,6 +23,37 @@ const BoxTypeEnum = {
 };
 
 let previousBalance = null;
+let lastProcessedIndex = null;
+async function loadPreviousBalance() {
+	try {
+		const data = await fsPromises.readFile('previous_balance.json', 'utf-8');
+		const parsed = JSON.parse(data);
+		if (typeof parsed.previousBalance === 'number') {
+			previousBalance = parsed.previousBalance;
+			console.log(`Загруженный предыдущий баланс: ${previousBalance} €`);
+		}
+	} catch (error) {
+		if (error.code !== 'ENOENT') {
+			console.error('Ошибка загрузки предыдущего баланса:', error);
+		} else {
+			console.log('Файл с предыдущим балансом не найден. Начинаем с null.');
+		}
+	}
+}
+
+async function savePreviousBalance() {
+	try {
+		await fsPromises.writeFile(
+			'previous_balance.json',
+			JSON.stringify({ previousBalance }, null, 2)
+		);
+		console.log(`Баланс ${previousBalance} € сохранён в файл.`);
+	} catch (error) {
+		console.error('Ошибка сохранения баланса:', error);
+	}
+}
+
+loadPreviousBalance();
 
 async function createConnection() {
 	if (connectionInstance) {
@@ -123,17 +156,21 @@ function extractBalance(smsText) {
 	return null;
 }
 
-async function waitForBalanceMessage(attempts = 3, delay = 1500) {
+async function waitForBalanceMessage(attempts = 5, delayTime = 1000) {
 	for (let i = 0; i < attempts; i++) {
 		const messages = await readIncomingSms();
-		const balanceMsg = messages.find((msg) => /saldo on/i.test(msg.Content));
+		const newMessages = messages.filter(
+			(msg) => msg.Index !== lastProcessedIndex
+		);
+		const balanceMsg = newMessages.find((msg) => /saldo on/i.test(msg.Content));
 		if (balanceMsg) {
+			lastProcessedIndex = balanceMsg.Index;
 			return balanceMsg;
 		}
 		console.log(
 			`Попытка ${i + 1}: Сообщение с балансом не найдено, повторная проверка...`
 		);
-		await new Promise((resolve) => setTimeout(resolve, delay));
+		await delay(delayTime);
 	}
 	throw new Error('Сообщение с балансом не получено.');
 }
@@ -149,21 +186,23 @@ async function saveMessageToHistory(message) {
 
 	try {
 		let existingLogs = [];
-		if (
-			await fs
-				.access(balanceLogFile)
-				.then(() => true)
-				.catch(() => false)
-		) {
-			const fileData = await fs.readFile(balanceLogFile, 'utf-8');
+		try {
+			const fileData = await fsPromises.readFile(balanceLogFile, 'utf-8');
 			existingLogs = JSON.parse(fileData);
+		} catch (err) {
+			if (err.code !== 'ENOENT') {
+				throw err;
+			}
 		}
 
 		existingLogs.push(logEntry);
-
 		existingLogs.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-		await fs.writeFile(balanceLogFile, JSON.stringify(existingLogs, null, 2));
+		await fsPromises.writeFile(
+			balanceLogFile,
+			JSON.stringify(existingLogs, null, 2)
+		);
+		console.log('Сообщение успешно сохранено в историю.');
 	} catch (error) {
 		console.error('Ошибка записи сообщения в историю:', error);
 	}
@@ -186,6 +225,7 @@ app.post('/send-sms', async (req, res) => {
 			const balanceMsg = await waitForBalanceMessage();
 			previousBalance = extractBalance(balanceMsg.Content);
 			console.log(`Начальный баланс: ${previousBalance} €`);
+			await savePreviousBalance();
 		} else {
 			console.log(`Текущий сохранённый баланс: ${previousBalance} €`);
 		}
@@ -195,6 +235,8 @@ app.post('/send-sms', async (req, res) => {
 		res.json({
 			success: true,
 			result,
+			previousBalance:
+				previousBalance !== null ? `${previousBalance} €` : 'N/A',
 		});
 	} catch (error) {
 		console.error('Ошибка в /send-sms:', error);
@@ -245,17 +287,21 @@ app.get('/balance', async (req, res) => {
 app.get('/balance-info', async (req, res) => {
 	try {
 		console.log('Проверяем сообщения на наличие баланса...');
-		const balanceMsg = await waitForBalanceMessage();
+
+		const balanceMsg = await waitForBalanceMessage(5, 3000);
 
 		if (balanceMsg && /saldo on/i.test(balanceMsg.Content)) {
 			const currentBalance = extractBalance(balanceMsg.Content);
+			const oldBalance = previousBalance;
 			let spent = null;
 
-			if (previousBalance !== null && currentBalance < previousBalance) {
-				spent = previousBalance - currentBalance;
+			if (oldBalance !== null && currentBalance < oldBalance) {
+				spent = oldBalance - currentBalance;
+			} else if (oldBalance !== null && currentBalance > oldBalance) {
+				console.log('Баланс увеличился или остался прежним.');
 			}
 
-			console.log(`Предыдущий баланс: ${previousBalance} €`);
+			console.log(`Предыдущий баланс: ${oldBalance} €`);
 			console.log(`Текущий баланс: ${currentBalance} €`);
 			console.log(
 				`Потрачено с последней проверки: ${
@@ -264,22 +310,19 @@ app.get('/balance-info', async (req, res) => {
 			);
 
 			previousBalance = currentBalance;
+			await savePreviousBalance();
+
+			await saveMessageToHistory(balanceMsg);
 
 			const sms = new huaweiLteApi.Sms(await createConnection());
-			const allBalanceMessages = (await readIncomingSms()).filter((msg) =>
-				/saldo on/i.test(msg.Content)
-			);
-
-			for (const msg of allBalanceMessages) {
-				saveMessageToHistory(msg);
-				await sms.deleteSms(msg.Index);
-				console.log(`Удалено сообщение с индексом: ${msg.Index}`);
-			}
+			await sms.deleteSms(balanceMsg.Index);
+			console.log(`Удалено сообщение с индексом: ${balanceMsg.Index}`);
 
 			return res.json({
 				success: true,
 				currentBalance: `${currentBalance.toFixed(2)} €`,
-				previousBalance: `${previousBalance.toFixed(2)} €`,
+				previousBalance:
+					oldBalance !== null ? `${oldBalance.toFixed(2)} €` : 'N/A',
 				spent: spent !== null ? `${spent.toFixed(2)} €` : '0.00 €',
 			});
 		}
